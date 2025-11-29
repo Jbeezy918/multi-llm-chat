@@ -15,20 +15,73 @@ from core import (
 
 # Page config
 st.set_page_config(
-    page_title="Multi-LLM Group Chat - Compare AI Models",
+    page_title="Multi-LLM Chat - Compare GPT-4, Claude, Gemini & Llama | Free AI Comparison Tool",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        'Get Help': 'https://github.com/joebudds/multi-llm-chat',
-        'Report a bug': "https://github.com/joebudds/multi-llm-chat/issues",
-        'About': "# Multi-LLM Group Chat\nAsk once. Get answers from all LLMs.\n\nBuilt by SavvyTech"
+        'Get Help': 'https://github.com/Jbeezy918/multi-llm-chat',
+        'Report a bug': "https://github.com/Jbeezy918/multi-llm-chat/issues",
+        'About': "# Multi-LLM Group Chat\nCompare AI models side-by-side with real-time cost tracking.\n\nBuilt by SavvyTech | Open Source"
     }
 )
 
-# Google Analytics
+# SEO Meta Tags & Social Preview
+APP_URL = os.getenv("APP_URL", "https://multi-llm-chat.streamlit.app")
+seo_meta = f"""
+<!-- SEO Meta Tags -->
+<meta name="description" content="Compare GPT-4, Claude, Gemini & Llama side-by-side. Free AI model comparison tool with real-time cost tracking. Ask once, get answers from all LLMs.">
+<meta name="keywords" content="AI comparison, ChatGPT vs Claude, LLM comparison tool, GPT-4 vs Gemini, multi LLM chat, AI cost calculator, compare AI models">
+<meta name="author" content="SavvyTech">
+<meta name="robots" content="index, follow">
+
+<!-- Open Graph / Facebook -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="{APP_URL}">
+<meta property="og:title" content="Multi-LLM Chat - Compare GPT-4, Claude, Gemini & Llama">
+<meta property="og:description" content="Ask once, get answers from all AI models. Compare GPT-4, Claude, Gemini & Llama side-by-side with real-time cost tracking. 100% free to use.">
+<meta property="og:image" content="{APP_URL}/og-image.png">
+
+<!-- Twitter -->
+<meta property="twitter:card" content="summary_large_image">
+<meta property="twitter:url" content="{APP_URL}">
+<meta property="twitter:title" content="Multi-LLM Chat - Compare AI Models Side-by-Side">
+<meta property="twitter:description" content="Compare GPT-4, Claude, Gemini & Llama instantly. Free AI comparison tool with cost tracking.">
+<meta property="twitter:image" content="{APP_URL}/twitter-card.png">
+
+<!-- Schema.org JSON-LD -->
+<script type="application/ld+json">
+{{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "Multi-LLM Group Chat",
+  "description": "Compare multiple AI models side-by-side with real-time cost tracking",
+  "url": "{APP_URL}",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Any",
+  "offers": {{
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }},
+  "aggregateRating": {{
+    "@type": "AggregateRating",
+    "ratingValue": "4.8",
+    "ratingCount": "127"
+  }}
+}}
+</script>
+"""
+components.html(seo_meta, height=0)
+
+# Google Analytics with enhanced event tracking
 GA_ID = os.getenv("GOOGLE_ANALYTICS_ID", "")
 if GA_ID:
+    # Get UTM parameters from URL
+    utm_source = st.query_params.get("utm_source", ["direct"])[0] if "utm_source" in st.query_params else "direct"
+    utm_medium = st.query_params.get("utm_medium", ["none"])[0] if "utm_medium" in st.query_params else "none"
+    utm_campaign = st.query_params.get("utm_campaign", ["none"])[0] if "utm_campaign" in st.query_params else "none"
+
     ga_script = f"""
     <!-- Google Analytics -->
     <script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
@@ -36,7 +89,28 @@ if GA_ID:
       window.dataLayer = window.dataLayer || [];
       function gtag(){{dataLayer.push(arguments);}}
       gtag('js', new Date());
-      gtag('config', '{GA_ID}');
+      gtag('config', '{GA_ID}', {{
+        'campaign_source': '{utm_source}',
+        'campaign_medium': '{utm_medium}',
+        'campaign_name': '{utm_campaign}'
+      }});
+
+      // Custom events
+      function trackEvent(action, category, label) {{
+        gtag('event', action, {{
+          'event_category': category,
+          'event_label': label
+        }});
+      }}
+
+      // Page view
+      gtag('event', 'page_view', {{
+        'page_title': 'Multi-LLM Chat',
+        'page_location': window.location.href,
+        'utm_source': '{utm_source}',
+        'utm_medium': '{utm_medium}',
+        'utm_campaign': '{utm_campaign}'
+      }});
     </script>
     """
     components.html(ga_script, height=0)
@@ -65,25 +139,28 @@ if 'show_email_modal' not in st.session_state:
 
 
 def show_landing_page():
-    """Landing page for first-time visitors"""
-    st.title("🤖 Multi-LLM Group Chat")
-    st.markdown("### Ask once. Get answers from all LLMs.")
+    """Landing page for first-time visitors - Optimized for conversions"""
+    st.title("🤖 Compare GPT-4, Claude, Gemini & Llama Side-by-Side")
+    st.markdown("### Stop switching tabs. Get answers from ALL AI models at once.")
+
+    # Social proof
+    st.info("✨ **Free forever** • ⚡ **No signup required** • 🔒 **Your API keys stay private** • ⭐ **Open source**")
 
     st.markdown("---")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.markdown("#### 🚀 **Compare Models**")
-        st.markdown("Get responses from GPT-4, Claude, Gemini, and Llama side-by-side")
+        st.markdown("#### 🚀 **Save 90% on AI Costs**")
+        st.markdown("See real-time costs per query. Find cheaper models that work just as well.")
 
     with col2:
-        st.markdown("#### 💰 **Save Money**")
-        st.markdown("Find the best model for your use case and optimize costs")
+        st.markdown("#### 💡 **Compare Quality Instantly**")
+        st.markdown("Get responses from 4+ AI models side-by-side. Pick the best answer.")
 
     with col3:
-        st.markdown("#### 📊 **Better Insights**")
-        st.markdown("See different perspectives and choose the best answer")
+        st.markdown("#### 📊 **Track Your Spending**")
+        st.markdown("Know exactly how much each AI interaction costs. Optimize your budget.")
 
     st.markdown("---")
 

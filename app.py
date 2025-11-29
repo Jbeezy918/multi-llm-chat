@@ -5,7 +5,13 @@ import streamlit as st
 import streamlit.components.v1 as components
 import os
 from datetime import datetime
-from core import get_all_providers, ConversationManager
+from core import (
+    get_all_providers,
+    ConversationManager,
+    TokenTracker,
+    UsageLogger,
+    get_pricing_info
+)
 
 # Page config
 st.set_page_config(
@@ -44,6 +50,18 @@ if 'config' not in st.session_state:
 
 if 'show_landing' not in st.session_state:
     st.session_state.show_landing = True
+
+if 'token_tracker' not in st.session_state:
+    st.session_state.token_tracker = TokenTracker()
+
+if 'usage_logger' not in st.session_state:
+    st.session_state.usage_logger = UsageLogger()
+
+if 'email_captured' not in st.session_state:
+    st.session_state.email_captured = False
+
+if 'show_email_modal' not in st.session_state:
+    st.session_state.show_email_modal = False
 
 
 def show_landing_page():
@@ -109,6 +127,40 @@ def show_landing_page():
     st.markdown("*Built with ❤️ by [SavvyTech](https://savvytechautomations.com)*")
 
 
+def show_email_capture():
+    """Email capture modal for lead generation"""
+    st.markdown("### 🎁 Unlock Premium Features")
+    st.markdown("Get updates on new features, cost-saving tips, and early access to premium tiers!")
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        email = st.text_input("Email address", placeholder="you@example.com")
+
+    with col2:
+        name = st.text_input("Name (optional)", placeholder="Your name")
+
+    col_btn1, col_btn2 = st.columns(2)
+
+    with col_btn1:
+        if st.button("✅ Get Updates", type="primary", use_container_width=True):
+            if email and "@" in email:
+                st.session_state.usage_logger.capture_email(email, name)
+                st.session_state.email_captured = True
+                st.session_state.show_email_modal = False
+                st.success("Thanks! We'll keep you updated. 🎉")
+                st.rerun()
+            else:
+                st.error("Please enter a valid email")
+
+    with col_btn2:
+        if st.button("Skip", use_container_width=True):
+            st.session_state.show_email_modal = False
+            st.rerun()
+
+    st.caption("We respect your privacy. No spam, unsubscribe anytime.")
+
+
 def main():
     """Main app"""
 
@@ -116,6 +168,11 @@ def main():
     if st.session_state.show_landing:
         show_landing_page()
         return
+
+    # Show email capture modal if triggered
+    if st.session_state.show_email_modal:
+        show_email_capture()
+        st.divider()
 
     # Header
     st.title("🤖 Multi-LLM Group Chat")
@@ -182,6 +239,29 @@ def main():
             ollama_model = st.text_input("Ollama Model", value="llama3.2")
             st.session_state.config['ollama_model'] = ollama_model
             st.caption("💡 Start Ollama: `ollama serve`")
+
+        st.divider()
+
+        # Cost tracking
+        st.subheader("💰 Session Costs")
+        total_cost = st.session_state.token_tracker.get_total_cost()
+
+        if total_cost > 0:
+            st.metric("Total Spent", f"${total_cost:.4f}")
+
+            # Show savings
+            savings, vs_model = st.session_state.token_tracker.get_savings_vs_most_expensive()
+            if savings > 0:
+                st.success(f"💰 Saved ${savings:.4f} vs using only {vs_model}")
+
+            # Show breakdown by provider
+            with st.expander("Cost Breakdown"):
+                summary = st.session_state.token_tracker.get_summary()
+                for provider, models in summary["by_provider"].items():
+                    for model, stats in models.items():
+                        st.caption(f"**{provider}/{model}**: ${stats['cost']:.4f} ({stats['requests']} requests)")
+        else:
+            st.info("No costs yet. Start chatting!")
 
         st.divider()
 
@@ -257,6 +337,9 @@ def main():
 
         # Get responses from all providers
         responses = {}
+        providers_used = []
+        tokens_by_provider = {}
+        total_interaction_cost = 0.0
 
         with st.spinner("Getting responses from all LLMs..."):
             cols = st.columns(len(providers))
@@ -267,10 +350,40 @@ def main():
                         response = provider.chat(prompt)
                         responses[name] = response
 
+                        # Track tokens and cost
+                        if not response.startswith("❌"):  # Only track successful responses
+                            providers_used.append(name)
+                            st.session_state.token_tracker.track(
+                                name.lower(),
+                                provider.model,
+                                prompt,
+                                response
+                            )
+
+                            # Get pricing info for display
+                            pricing = get_pricing_info(provider.model, name.lower())
+                            tokens_by_provider[name] = pricing
+
+        # Calculate total cost for this interaction
+        total_interaction_cost = st.session_state.token_tracker.get_total_cost()
+
+        # Log usage
+        st.session_state.usage_logger.log_interaction(
+            prompt=prompt,
+            providers_used=providers_used,
+            tokens_used=tokens_by_provider,
+            cost=total_interaction_cost
+        )
+
         # Save to conversation history
         st.session_state.conversation_manager.add_message(prompt, responses)
 
-        st.success("✅ All responses received!")
+        # Show email capture after 3rd interaction (if not captured)
+        session_stats = st.session_state.usage_logger.get_session_stats()
+        if session_stats["total_interactions"] >= 3 and not st.session_state.email_captured:
+            st.session_state.show_email_modal = True
+
+        st.success(f"✅ All responses received! Cost: ${total_interaction_cost:.4f}")
 
     # Display conversation history
     st.divider()

@@ -5,6 +5,7 @@ from .pricing import TokenTracker, calculate_cost, estimate_tokens, get_pricing_
 from .analytics import UsageLogger, get_total_users, get_total_sessions
 from .referrals import ReferralManager, generate_referral_code, generate_shareable_link
 from .affiliates import AffiliateManager, AFFILIATE_LINKS, get_landing_page_affiliate_section
+from .subscriptions import SubscriptionManager, SubscriptionTier, SUBSCRIPTION_TIERS, get_pricing_table, format_tier_features
 
 __all__ = [
     'LLMProvider',
@@ -26,5 +27,10 @@ __all__ = [
     'generate_shareable_link',
     'AffiliateManager',
     'AFFILIATE_LINKS',
-    'get_landing_page_affiliate_section'
+    'get_landing_page_affiliate_section',
+    'SubscriptionManager',
+    'SubscriptionTier',
+    'SUBSCRIPTION_TIERS',
+    'get_pricing_table',
+    'format_tier_features'
 ]

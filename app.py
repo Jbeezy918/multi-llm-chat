@@ -15,7 +15,11 @@ from core import (
     generate_referral_code,
     generate_shareable_link,
     AffiliateManager,
-    AFFILIATE_LINKS
+    AFFILIATE_LINKS,
+    SubscriptionManager,
+    SUBSCRIPTION_TIERS,
+    get_pricing_table,
+    format_tier_features
 )
 
 # Page config
@@ -161,6 +165,21 @@ if 'referred_by' not in st.session_state:
 
 if 'example_prompt' not in st.session_state:
     st.session_state.example_prompt = None
+
+if 'subscription_manager' not in st.session_state:
+    st.session_state.subscription_manager = SubscriptionManager()
+
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = None
+
+if 'user_tier' not in st.session_state:
+    st.session_state.user_tier = 'free'
+
+if 'show_pricing_modal' not in st.session_state:
+    st.session_state.show_pricing_modal = False
+
+if 'interaction_count' not in st.session_state:
+    st.session_state.interaction_count = 0
 
 # Example prompts
 EXAMPLE_PROMPTS = [
@@ -343,6 +362,10 @@ def show_email_capture():
                 st.session_state.usage_logger.capture_email(email, name)
                 st.session_state.email_captured = True
                 st.session_state.show_email_modal = False
+                st.session_state.user_email = email
+
+                # Create subscription (free tier)
+                st.session_state.subscription_manager.create_subscription(email, tier="free", name=name)
 
                 # Generate referral code
                 referral_code = st.session_state.referral_manager.create_referral_code(email, name)
@@ -369,6 +392,73 @@ def show_email_capture():
     st.caption("We respect your privacy. No spam, unsubscribe anytime.")
 
 
+def show_pricing_modal():
+    """Plans & Pricing modal"""
+    st.markdown("## 💎 Plans & Pricing")
+    st.markdown("Choose the plan that fits your needs:")
+
+    # Get all tiers
+    tiers = get_pricing_table()
+
+    # Display tiers in columns
+    cols = st.columns(4)
+
+    for idx, tier in enumerate(tiers):
+        with cols[idx]:
+            # Highlight Premium tier
+            if tier["id"] == "premium":
+                st.markdown("### ⭐ " + tier["name"])
+            else:
+                st.markdown("### " + tier["name"])
+
+            # Price
+            if tier["price"] == 0:
+                st.markdown("## FREE")
+                st.markdown("forever")
+            else:
+                st.markdown(f"## ${tier['price']}")
+                st.markdown(tier["billing"])
+
+            st.markdown(tier["description"])
+            st.markdown("---")
+
+            # Features
+            features = format_tier_features(tier["id"])
+            for feature in features:
+                st.markdown(feature)
+
+            st.markdown("---")
+
+            # CTA button
+            if st.session_state.user_tier == tier["id"]:
+                st.success("✅ Current Plan")
+            elif tier["id"] == "free":
+                st.info("Active")
+            else:
+                if st.button(tier["cta"], key=f"upgrade_{tier['id']}", use_container_width=True, type="primary" if tier["id"] == "premium" else "secondary"):
+                    # Simulate upgrade (no real billing yet)
+                    if st.session_state.user_email:
+                        success = st.session_state.subscription_manager.upgrade_subscription(
+                            st.session_state.user_email,
+                            tier["id"]
+                        )
+                        if success:
+                            st.session_state.user_tier = tier["id"]
+                            st.success(f"🎉 Upgraded to {tier['name']}! (Simulated - no billing yet)")
+                            st.session_state.show_pricing_modal = False
+                            st.rerun()
+                    else:
+                        st.warning("Please provide your email first")
+
+    st.markdown("---")
+    st.markdown("### 💳 Payment Integration Coming Soon")
+    st.markdown("For now, upgrades are simulated (no real billing). Stripe integration will be added in production.")
+
+    if st.button("Close", use_container_width=True):
+        st.session_state.show_pricing_modal = False
+        st.rerun()
+
+
 def main():
     """Main app"""
 
@@ -381,6 +471,11 @@ def main():
     if st.session_state.show_email_modal:
         show_email_capture()
         st.divider()
+
+    # Show pricing modal if triggered
+    if st.session_state.show_pricing_modal:
+        show_pricing_modal()
+        return
 
     # Header
     st.title("🤖 Multi-LLM Group Chat")
@@ -450,6 +545,36 @@ def main():
 
         st.divider()
 
+        # Current Plan Section
+        st.subheader("💎 Your Plan")
+        tier_info = SUBSCRIPTION_TIERS[st.session_state.user_tier]
+
+        st.markdown(f"**{tier_info['name']}**")
+        if tier_info['price'] > 0:
+            st.caption(f"${tier_info['price']}/{tier_info['billing']}")
+        else:
+            st.caption("Free forever")
+
+        # Show usage limits for free tier
+        if st.session_state.user_email and st.session_state.user_tier == 'free':
+            usage = st.session_state.subscription_manager.check_usage_limit(st.session_state.user_email)
+            if usage['limit'] != -1:
+                st.progress(usage['used'] / usage['limit'] if usage['limit'] > 0 else 0)
+                st.caption(f"{usage['remaining']}/{usage['limit']} conversations remaining today")
+
+        # View Plans button
+        if st.button("📋 View All Plans", use_container_width=True):
+            st.session_state.show_pricing_modal = True
+            st.rerun()
+
+        # Upgrade CTA for free users
+        if st.session_state.user_tier == 'free':
+            if st.button("⭐ Upgrade to Premium - $8.99/mo", type="primary", use_container_width=True):
+                st.session_state.show_pricing_modal = True
+                st.rerun()
+
+        st.divider()
+
         # Cost tracking
         st.subheader("💰 Session Costs")
         total_cost = st.session_state.token_tracker.get_total_cost()
@@ -468,6 +593,13 @@ def main():
                 for provider, models in summary["by_provider"].items():
                     for model, stats in models.items():
                         st.caption(f"**{provider}/{model}**: ${stats['cost']:.4f} ({stats['requests']} requests)")
+
+            # Upgrade CTA for free users to unlock detailed analytics
+            if st.session_state.user_tier == 'free':
+                st.info("💡 Upgrade to Premium for detailed cost analytics & trends")
+                if st.button("Unlock Analytics →", key="upgrade_from_cost", use_container_width=True):
+                    st.session_state.show_pricing_modal = True
+                    st.rerun()
         else:
             st.info("No costs yet. Start chatting!")
 
@@ -551,6 +683,13 @@ def main():
             if stats:
                 st.caption(f"Referrals: {stats['total_signups']} • Rewards: {stats['rewards_earned_days']} days free")
 
+            # Upgrade CTA for free users to unlock referral rewards
+            if st.session_state.user_tier == 'free':
+                st.warning("⚠️ Upgrade to Premium to redeem referral rewards")
+                if st.button("Unlock Rewards →", key="upgrade_from_referral", use_container_width=True):
+                    st.session_state.show_pricing_modal = True
+                    st.rerun()
+
     # Main content area
     # Initialize providers
     providers = get_all_providers(st.session_state.config)
@@ -572,14 +711,34 @@ def main():
     # Chat input
     prompt = st.text_area(
         "Your question:",
+        value=st.session_state.example_prompt if st.session_state.example_prompt else "",
         placeholder="Ask anything... (e.g., 'Explain quantum computing in simple terms')",
         height=100
     )
+
+    # Clear example prompt after it's been used
+    if st.session_state.example_prompt:
+        st.session_state.example_prompt = None
 
     if st.button("🚀 Ask All LLMs", type="primary", use_container_width=True):
         if not prompt:
             st.error("Please enter a question")
             return
+
+        # Feature gating: Check usage limits for free tier
+        if st.session_state.user_email:
+            usage = st.session_state.subscription_manager.check_usage_limit(st.session_state.user_email)
+
+            if not usage['allowed']:
+                st.error(f"❌ Daily limit reached ({usage['limit']} conversations/day on Free plan)")
+                st.info("💡 Upgrade to Premium for unlimited conversations!")
+                if st.button("⭐ Upgrade Now", key="upgrade_from_limit"):
+                    st.session_state.show_pricing_modal = True
+                    st.rerun()
+                return
+
+            # Track usage for free users
+            st.session_state.subscription_manager.track_usage(st.session_state.user_email, "conversation")
 
         # Get responses from all providers
         responses = {}

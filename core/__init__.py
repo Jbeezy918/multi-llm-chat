@@ -3,6 +3,8 @@ from .llm_providers import LLMProvider, OpenAIProvider, ClaudeProvider, GeminiPr
 from .conversation import ConversationManager
 from .pricing import TokenTracker, calculate_cost, estimate_tokens, get_pricing_info
 from .analytics import UsageLogger, get_total_users, get_total_sessions
+from .referrals import ReferralManager, generate_referral_code, generate_shareable_link
+from .affiliates import AffiliateManager, AFFILIATE_LINKS, get_landing_page_affiliate_section
 
 __all__ = [
     'LLMProvider',
@@ -18,5 +20,11 @@ __all__ = [
     'get_pricing_info',
     'UsageLogger',
     'get_total_users',
-    'get_total_sessions'
+    'get_total_sessions',
+    'ReferralManager',
+    'generate_referral_code',
+    'generate_shareable_link',
+    'AffiliateManager',
+    'AFFILIATE_LINKS',
+    'get_landing_page_affiliate_section'
 ]

@@ -6,3 +6,10 @@ google-generativeai>=0.3.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 tiktoken>=0.5.0
+
+# Stripe billing integration
+stripe>=7.0.0
+
+# Webhook server (optional - only needed if running webhook.py)
+fastapi>=0.109.0
+uvicorn>=0.27.0

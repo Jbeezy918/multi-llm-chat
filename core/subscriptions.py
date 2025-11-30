@@ -144,7 +144,10 @@ class SubscriptionManager:
                 "team_members": [],
                 "is_active": True,
                 "billing_cycle_start": datetime.now().isoformat(),
-                "next_billing_date": (datetime.now() + timedelta(days=30)).isoformat() if tier != "free" else None
+                "next_billing_date": (datetime.now() + timedelta(days=30)).isoformat() if tier != "free" else None,
+                "stripe_customer_id": None,
+                "stripe_subscription_id": None,
+                "payment_status": "none"
             }
 
             # Track event
@@ -206,6 +209,42 @@ class SubscriptionManager:
         self._track_event(email, "subscription_downgraded", {
             "old_tier": old_tier,
             "new_tier": new_tier
+        })
+
+        self._save_subscriptions()
+        return True
+
+    def update_stripe_data(self, email: str, customer_id: Optional[str] = None,
+                          subscription_id: Optional[str] = None, payment_status: Optional[str] = None) -> bool:
+        """Update Stripe customer and subscription IDs for user
+
+        Args:
+            email: User email address
+            customer_id: Stripe customer ID (optional)
+            subscription_id: Stripe subscription ID (optional)
+            payment_status: Payment status (active, past_due, canceled, etc.) (optional)
+
+        Returns:
+            True if updated successfully, False otherwise
+        """
+        if email not in self.subscriptions["users"]:
+            return False
+
+        # Update Stripe data
+        if customer_id is not None:
+            self.subscriptions["users"][email]["stripe_customer_id"] = customer_id
+
+        if subscription_id is not None:
+            self.subscriptions["users"][email]["stripe_subscription_id"] = subscription_id
+
+        if payment_status is not None:
+            self.subscriptions["users"][email]["payment_status"] = payment_status
+
+        # Track event
+        self._track_event(email, "stripe_data_updated", {
+            "customer_id": customer_id,
+            "subscription_id": subscription_id,
+            "payment_status": payment_status
         })
 
         self._save_subscriptions()

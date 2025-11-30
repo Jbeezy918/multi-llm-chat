@@ -6,6 +6,17 @@ from .analytics import UsageLogger, get_total_users, get_total_sessions
 from .referrals import ReferralManager, generate_referral_code, generate_shareable_link
 from .affiliates import AffiliateManager, AFFILIATE_LINKS, get_landing_page_affiliate_section
 from .subscriptions import SubscriptionManager, SubscriptionTier, SUBSCRIPTION_TIERS, get_pricing_table, format_tier_features
+from .billing import (
+    create_checkout_session,
+    parse_webhook_event,
+    handle_checkout_completed,
+    handle_subscription_updated,
+    handle_subscription_deleted,
+    create_customer_portal_session,
+    get_stripe_subscription_status,
+    is_stripe_configured,
+    verify_stripe_config
+)
 
 __all__ = [
     'LLMProvider',
@@ -32,5 +43,14 @@ __all__ = [
     'SubscriptionTier',
     'SUBSCRIPTION_TIERS',
     'get_pricing_table',
-    'format_tier_features'
+    'format_tier_features',
+    'create_checkout_session',
+    'parse_webhook_event',
+    'handle_checkout_completed',
+    'handle_subscription_updated',
+    'handle_subscription_deleted',
+    'create_customer_portal_session',
+    'get_stripe_subscription_status',
+    'is_stripe_configured',
+    'verify_stripe_config'
 ]

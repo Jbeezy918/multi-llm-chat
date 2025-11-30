@@ -19,7 +19,10 @@ from core import (
     SubscriptionManager,
     SUBSCRIPTION_TIERS,
     get_pricing_table,
-    format_tier_features
+    format_tier_features,
+    create_checkout_session,
+    create_customer_portal_session,
+    is_stripe_configured
 )
 
 # Page config
@@ -180,6 +183,17 @@ if 'show_pricing_modal' not in st.session_state:
 
 if 'interaction_count' not in st.session_state:
     st.session_state.interaction_count = 0
+
+if 'stripe_configured' not in st.session_state:
+    st.session_state.stripe_configured = is_stripe_configured()
+
+# Check for billing redirect params
+billing_status = st.query_params.get("billing", [None])[0] if "billing" in st.query_params else None
+if billing_status and 'billing_redirect_handled' not in st.session_state:
+    st.session_state.billing_redirect = billing_status
+    st.session_state.billing_redirect_handled = True
+elif 'billing_redirect' not in st.session_state:
+    st.session_state.billing_redirect = None
 
 # Example prompts
 EXAMPLE_PROMPTS = [
@@ -436,23 +450,42 @@ def show_pricing_modal():
                 st.info("Active")
             else:
                 if st.button(tier["cta"], key=f"upgrade_{tier['id']}", use_container_width=True, type="primary" if tier["id"] == "premium" else "secondary"):
-                    # Simulate upgrade (no real billing yet)
-                    if st.session_state.user_email:
+                    if not st.session_state.user_email:
+                        st.warning("Please provide your email first")
+                    elif st.session_state.stripe_configured:
+                        # Real Stripe checkout
+                        checkout_url = create_checkout_session(
+                            st.session_state.user_email,
+                            tier["id"],
+                            st.session_state.subscription_manager
+                        )
+                        if checkout_url:
+                            st.success("✅ Redirecting to secure checkout...")
+                            st.markdown(f"[Complete Payment on Stripe →]({checkout_url})")
+                            st.info("💡 You'll be redirected back after payment. Your plan will update automatically via webhook.")
+                        else:
+                            st.error("❌ Failed to create checkout session. Please try again.")
+                    else:
+                        # Fallback: Simulated upgrade (dev mode)
                         success = st.session_state.subscription_manager.upgrade_subscription(
                             st.session_state.user_email,
                             tier["id"]
                         )
                         if success:
                             st.session_state.user_tier = tier["id"]
-                            st.success(f"🎉 Upgraded to {tier['name']}! (Simulated - no billing yet)")
+                            st.warning(f"⚠️ Simulated upgrade to {tier['name']} (Stripe not configured)")
                             st.session_state.show_pricing_modal = False
                             st.rerun()
-                    else:
-                        st.warning("Please provide your email first")
 
     st.markdown("---")
-    st.markdown("### 💳 Payment Integration Coming Soon")
-    st.markdown("For now, upgrades are simulated (no real billing). Stripe integration will be added in production.")
+
+    # Show Stripe configuration status
+    if st.session_state.stripe_configured:
+        st.success("✅ Stripe payment processing enabled")
+        st.caption("Payments are processed securely by Stripe. You'll be redirected to complete your purchase.")
+    else:
+        st.warning("⚠️ Stripe not configured - using simulated billing")
+        st.caption("Set STRIPE_SECRET_KEY and STRIPE_PRICE_* environment variables to enable real payments.")
 
     if st.button("Close", use_container_width=True):
         st.session_state.show_pricing_modal = False
@@ -466,6 +499,33 @@ def main():
     if st.session_state.show_landing:
         show_landing_page()
         return
+
+    # Handle billing redirect (success/cancel from Stripe)
+    if st.session_state.billing_redirect:
+        if st.session_state.billing_redirect == "success":
+            st.success("🎉 Payment received! Your plan is being activated...")
+            st.info("💡 Your tier will update within a few seconds as our webhook processes your payment.")
+            st.caption("If your plan doesn't update automatically, please refresh the page in a moment.")
+
+            # Option to manually refresh
+            if st.button("Refresh Now", type="primary"):
+                # Reload subscription data
+                if st.session_state.user_email:
+                    subscription = st.session_state.subscription_manager.get_subscription(st.session_state.user_email)
+                    if subscription:
+                        st.session_state.user_tier = subscription.get('tier', 'free')
+                st.session_state.billing_redirect = None
+                st.rerun()
+
+        elif st.session_state.billing_redirect == "cancel":
+            st.warning("Payment was canceled. No charges were made.")
+            st.info("You can try upgrading again anytime from the sidebar.")
+
+            if st.button("Close", type="secondary"):
+                st.session_state.billing_redirect = None
+                st.rerun()
+
+        st.divider()
 
     # Show email capture modal if triggered
     if st.session_state.show_email_modal:

@@ -4,7 +4,9 @@ Ship fast, improve after.
 import streamlit as st
 import streamlit.components.v1 as components
 import os
-from datetime import datetime
+import json
+from pathlib import Path
+from datetime import datetime, timedelta
 from core import (
     get_all_providers,
     ConversationManager,
@@ -187,6 +189,19 @@ if 'interaction_count' not in st.session_state:
 if 'stripe_configured' not in st.session_state:
     st.session_state.stripe_configured = is_stripe_configured()
 
+# Phase 6: AI Receptionist session state
+if 'receptionist_mode' not in st.session_state:
+    st.session_state.receptionist_mode = False
+
+if 'business_profile' not in st.session_state:
+    st.session_state.business_profile = None
+
+if 'receptionist_call_history' not in st.session_state:
+    st.session_state.receptionist_call_history = []
+
+if 'receptionist_logger' not in st.session_state:
+    st.session_state.receptionist_logger = ReceptionistCallLogger()
+
 # Check for billing redirect params
 billing_status = st.query_params.get("billing", [None])[0] if "billing" in st.query_params else None
 if billing_status and 'billing_redirect_handled' not in st.session_state:
@@ -194,6 +209,297 @@ if billing_status and 'billing_redirect_handled' not in st.session_state:
     st.session_state.billing_redirect_handled = True
 elif 'billing_redirect' not in st.session_state:
     st.session_state.billing_redirect = None
+
+# Phase 6: AI Receptionist helper classes
+class ReceptionistCallLogger:
+    """Log AI receptionist calls for tracking and analytics"""
+
+    def __init__(self, analytics_dir: str = "analytics"):
+        self.analytics_dir = Path(analytics_dir)
+        self.analytics_dir.mkdir(exist_ok=True)
+        self.calls_file = self.analytics_dir / "receptionist_calls.json"
+        self.calls_data = self._load_calls()
+
+    def _load_calls(self):
+        """Load calls from file"""
+        if self.calls_file.exists():
+            with open(self.calls_file, 'r') as f:
+                return json.load(f)
+        return {"calls": [], "usage_by_user": {}}
+
+    def _save_calls(self):
+        """Save calls to file"""
+        with open(self.calls_file, 'w') as f:
+            json.dump(self.calls_data, f, indent=2)
+
+    def log_call(self, user_email: str, business_name: str, caller_input: str,
+                 receptionist_response: str, model_used: str):
+        """Log a receptionist call"""
+        call_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "user_email": user_email,
+            "business_name": business_name,
+            "caller_input": caller_input,
+            "receptionist_response": receptionist_response,
+            "model_used": model_used
+        }
+
+        self.calls_data["calls"].append(call_entry)
+
+        # Update usage by user
+        if user_email not in self.calls_data["usage_by_user"]:
+            self.calls_data["usage_by_user"][user_email] = 0
+        self.calls_data["usage_by_user"][user_email] += 1
+
+        self._save_calls()
+
+    def get_user_call_count_today(self, user_email: str) -> int:
+        """Get call count for user today"""
+        today = datetime.now().date().isoformat()
+        count = 0
+        for call in self.calls_data["calls"]:
+            if call["user_email"] == user_email and call["timestamp"][:10] == today:
+                count += 1
+        return count
+
+    def get_stats_last_30_days(self):
+        """Get receptionist usage stats for last 30 days"""
+        from datetime import timedelta
+        thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
+
+        recent_calls = [
+            c for c in self.calls_data["calls"]
+            if c.get("timestamp", "") >= thirty_days_ago
+        ]
+
+        # Count by user
+        user_counts = {}
+        for call in recent_calls:
+            email = call.get("user_email", "unknown")
+            user_counts[email] = user_counts.get(email, 0) + 1
+
+        # Sort by count descending
+        top_users = sorted(user_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        return {
+            "total_calls": len(recent_calls),
+            "top_users": top_users
+        }
+
+
+def generate_receptionist_prompt(business_profile: dict, caller_input: str) -> str:
+    """Generate system prompt for AI receptionist based on business profile"""
+
+    business_name = business_profile.get("business_name", "the business")
+    industry = business_profile.get("industry", "restaurant")
+    hours = business_profile.get("hours", "9 AM - 5 PM")
+    greeting = business_profile.get("greeting", f"Thank you for calling {business_name}!")
+    faqs = business_profile.get("faqs", "")
+    actions = business_profile.get("actions", "take message, provide information")
+
+    system_prompt = f"""You are a professional AI receptionist for {business_name}, a {industry}.
+
+BUSINESS INFORMATION:
+- Business Name: {business_name}
+- Industry: {industry}
+- Hours: {hours}
+- Standard Greeting: {greeting}
+
+YOUR ROLE:
+- Answer calls professionally with warmth and efficiency
+- Keep responses concise (2-3 sentences max for phone etiquette)
+- Always be polite, helpful, and clear
+- Use proper phone etiquette (e.g., "May I help you with anything else?")
+
+COMMON QUESTIONS & ANSWERS:
+{faqs if faqs else "Handle general questions about hours, location, and services."}
+
+AVAILABLE ACTIONS:
+{actions}
+
+IMPORTANT PHONE ETIQUETTE RULES:
+1. Keep responses SHORT - you're on a phone call, not writing an email
+2. Use natural, conversational language
+3. Offer to help further before ending
+4. If you don't know something, offer to take a message or transfer
+5. Always maintain professional but friendly tone
+
+Now respond to this caller: "{caller_input}"
+
+Remember: Keep it brief and natural, as if you're speaking on the phone."""
+
+    return system_prompt
+
+
+def show_business_profile_setup():
+    """UI for setting up business profile for AI receptionist"""
+    st.subheader("📋 Business Profile Setup")
+    st.markdown("Configure your AI receptionist by filling in your business details below.")
+
+    with st.form("business_profile_form"):
+        business_name = st.text_input(
+            "Business Name *",
+            value=st.session_state.business_profile.get("business_name", "") if st.session_state.business_profile else "",
+            placeholder="e.g., Tony's Pizza"
+        )
+
+        industry = st.selectbox(
+            "Industry *",
+            ["Restaurant", "Retail Store", "Medical Office", "Law Firm", "Salon/Spa", "Other"],
+            index=0 if not st.session_state.business_profile else
+            ["Restaurant", "Retail Store", "Medical Office", "Law Firm", "Salon/Spa", "Other"].index(
+                st.session_state.business_profile.get("industry", "Restaurant")
+            )
+        )
+
+        hours = st.text_input(
+            "Business Hours *",
+            value=st.session_state.business_profile.get("hours", "") if st.session_state.business_profile else "",
+            placeholder="e.g., Monday-Friday 9 AM - 9 PM, Saturday-Sunday 10 AM - 6 PM"
+        )
+
+        greeting = st.text_area(
+            "Phone Greeting *",
+            value=st.session_state.business_profile.get("greeting", "") if st.session_state.business_profile else "",
+            placeholder="e.g., Thank you for calling Tony's Pizza! How may I help you today?",
+            height=80
+        )
+
+        faqs = st.text_area(
+            "Common Questions & Answers (Optional)",
+            value=st.session_state.business_profile.get("faqs", "") if st.session_state.business_profile else "",
+            placeholder="Example:\n- Do you deliver? Yes, we deliver within 5 miles.\n- Do you take reservations? Yes, call us or book online.\n- What's your address? 123 Main St, Downtown.",
+            height=120
+        )
+
+        actions = st.text_input(
+            "Available Actions (Optional)",
+            value=st.session_state.business_profile.get("actions", "") if st.session_state.business_profile else "",
+            placeholder="e.g., take message, schedule appointment, provide directions, answer menu questions"
+        )
+
+        submitted = st.form_submit_button("💾 Save Business Profile", use_container_width=True)
+
+        if submitted:
+            if not business_name or not hours or not greeting:
+                st.error("❌ Please fill in all required fields (marked with *)")
+            else:
+                st.session_state.business_profile = {
+                    "business_name": business_name,
+                    "industry": industry,
+                    "hours": hours,
+                    "greeting": greeting,
+                    "faqs": faqs,
+                    "actions": actions if actions else "take message, provide information"
+                }
+                st.success("✅ Business profile saved! You can now test the receptionist.")
+                st.rerun()
+
+
+def show_receptionist_simulator():
+    """UI for simulating AI receptionist calls"""
+    st.subheader("📞 Call Simulator")
+
+    if not st.session_state.business_profile:
+        st.warning("⚠️ Please set up your business profile first before testing calls.")
+        return
+
+    business_name = st.session_state.business_profile.get("business_name", "your business")
+
+    st.markdown(f"**Simulating calls to: {business_name}**")
+    st.caption("Type what a caller would say, and the AI receptionist will respond.")
+
+    # Feature gating: Check usage limits
+    if st.session_state.user_email:
+        calls_today = st.session_state.receptionist_logger.get_user_call_count_today(st.session_state.user_email)
+
+        # Free tier: 3 calls/day, Premium+: unlimited
+        if st.session_state.user_tier == 'free':
+            limit = 3
+            remaining = max(0, limit - calls_today)
+
+            st.info(f"📊 Free tier: {remaining}/{limit} test calls remaining today")
+
+            if calls_today >= limit:
+                st.error(f"❌ Daily limit reached ({limit} test calls/day on Free plan)")
+                st.info("💡 Upgrade to Premium for unlimited receptionist test calls!")
+                if st.button("⭐ Upgrade Now", key="upgrade_receptionist"):
+                    st.session_state.show_pricing_modal = True
+                    st.rerun()
+                return
+        else:
+            st.success(f"✅ Premium tier: Unlimited test calls (used {calls_today} today)")
+    else:
+        st.info("💡 Sign in to track your test call usage")
+
+    # Call simulator form
+    caller_input = st.text_area(
+        "Caller says:",
+        placeholder="Example: Hi, I'd like to make a reservation for 6 people tonight at 7 PM.",
+        height=100,
+        key="caller_input"
+    )
+
+    # Model selection for receptionist (use first available provider)
+    providers = get_all_providers(st.session_state.config)
+
+    if not providers:
+        st.warning("⚠️ Please configure at least one API key in the sidebar to use the receptionist.")
+        return
+
+    # Use first available provider
+    selected_provider_name = list(providers.keys())[0]
+    selected_provider = providers[selected_provider_name]
+
+    st.caption(f"Using: {selected_provider_name} - {selected_provider.model}")
+
+    if st.button("📞 Simulate Call", type="primary", use_container_width=True):
+        if not caller_input:
+            st.error("Please enter what the caller would say")
+            return
+
+        # Generate receptionist prompt
+        full_prompt = generate_receptionist_prompt(st.session_state.business_profile, caller_input)
+
+        with st.spinner(f"AI Receptionist responding..."):
+            # Get response from LLM
+            response = selected_provider.chat(full_prompt)
+
+            if response.startswith("❌"):
+                st.error(f"Error getting response: {response}")
+                return
+
+            # Log the call
+            if st.session_state.user_email:
+                st.session_state.receptionist_logger.log_call(
+                    user_email=st.session_state.user_email,
+                    business_name=business_name,
+                    caller_input=caller_input,
+                    receptionist_response=response,
+                    model_used=f"{selected_provider_name}/{selected_provider.model}"
+                )
+
+            # Add to session history
+            st.session_state.receptionist_call_history.insert(0, {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "caller": caller_input,
+                "receptionist": response
+            })
+
+            st.success("✅ Call completed!")
+
+    # Display call history
+    st.divider()
+    st.markdown("### 📜 Call History (This Session)")
+
+    if not st.session_state.receptionist_call_history:
+        st.info("No calls yet. Start by simulating a call above!")
+    else:
+        for i, call in enumerate(st.session_state.receptionist_call_history[:10], 1):
+            with st.expander(f"Call {i} - {call['timestamp']}", expanded=(i == 1)):
+                st.markdown(f"**Caller:** {call['caller']}")
+                st.markdown(f"**Receptionist:** {call['receptionist']}")
+
 
 # Example prompts
 EXAMPLE_PROMPTS = [
@@ -620,13 +926,37 @@ def main():
         show_pricing_modal()
         return
 
-    # Header
-    st.title("🤖 Multi-LLM Group Chat")
-    st.markdown("**Ask once. Get answers from all LLMs.**")
+    # Header (conditional based on mode)
+    if st.session_state.receptionist_mode:
+        st.title("📞 AI Receptionist (Beta)")
+        st.markdown("**Test your AI phone receptionist in a simulated environment.**")
+    else:
+        st.title("🤖 Multi-LLM Group Chat")
+        st.markdown("**Ask once. Get answers from all LLMs.**")
 
     # Sidebar - Configuration
     with st.sidebar:
         st.header("⚙️ Configuration")
+
+        # Phase 6: Mode toggle for AI Receptionist
+        st.divider()
+        st.subheader("🔄 Mode")
+
+        mode = st.radio(
+            "Select Mode:",
+            ["Multi-LLM Chat", "AI Receptionist (Beta)"],
+            index=1 if st.session_state.receptionist_mode else 0,
+            help="Switch between comparing LLMs and testing AI receptionist"
+        )
+
+        if mode == "AI Receptionist (Beta)" and not st.session_state.receptionist_mode:
+            st.session_state.receptionist_mode = True
+            st.rerun()
+        elif mode == "Multi-LLM Chat" and st.session_state.receptionist_mode:
+            st.session_state.receptionist_mode = False
+            st.rerun()
+
+        st.divider()
 
         st.subheader("🔑 API Keys")
 
@@ -869,6 +1199,21 @@ def main():
 
                     st.metric("Churns (30 days)", len(recent_churns))
 
+                    # Phase 6: Receptionist stats
+                    st.divider()
+                    st.caption("**AI Receptionist Usage (Last 30 Days):**")
+
+                    receptionist_stats = st.session_state.receptionist_logger.get_stats_last_30_days()
+
+                    st.metric("Total Test Calls", receptionist_stats['total_calls'])
+
+                    if receptionist_stats['top_users']:
+                        st.caption("**Top Users by Test Calls:**")
+                        for email, count in receptionist_stats['top_users']:
+                            st.caption(f"• {email[:25]}... : {count} calls")
+                    else:
+                        st.caption("No receptionist test calls yet")
+
                 elif password_input:
                     st.error("❌ Incorrect password")
 
@@ -918,6 +1263,20 @@ def main():
                     st.rerun()
 
     # Main content area
+    # Phase 6: Show receptionist UI if in receptionist mode
+    if st.session_state.receptionist_mode:
+        # Receptionist mode UI
+        col1, col2 = st.columns([1, 1])
+
+        with col1:
+            show_business_profile_setup()
+
+        with col2:
+            show_receptionist_simulator()
+
+        return
+
+    # Regular Multi-LLM Chat mode
     # Initialize providers
     providers = get_all_providers(st.session_state.config)
 

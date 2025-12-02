@@ -328,6 +328,89 @@ def show_landing_page():
 
     st.markdown("---")
 
+    # Pricing Section
+    st.markdown("### 💎 Simple, Transparent Pricing")
+    st.markdown("Start free, upgrade when you're ready.")
+
+    price_col1, price_col2, price_col3 = st.columns(3)
+
+    with price_col1:
+        st.markdown("#### Free")
+        st.markdown("## $0")
+        st.markdown("**Perfect for trying out**")
+        st.markdown("✅ 10 conversations/day")
+        st.markdown("✅ All 4 LLM providers")
+        st.markdown("✅ Cost tracking")
+        st.markdown("✅ Conversation history")
+
+    with price_col2:
+        st.markdown("#### ⭐ Premium")
+        st.markdown("## $8.99/mo")
+        st.markdown("**Most popular**")
+        st.markdown("✅ **Unlimited conversations**")
+        st.markdown("✅ Detailed cost analytics")
+        st.markdown("✅ Referral rewards")
+        st.markdown("✅ Priority support")
+        st.markdown("✅ Export conversations")
+
+    with price_col3:
+        st.markdown("#### Team")
+        st.markdown("## $29.99/mo")
+        st.markdown("**For teams**")
+        st.markdown("✅ Everything in Premium")
+        st.markdown("✅ Up to 5 team members")
+        st.markdown("✅ Shared workspace")
+        st.markdown("✅ Team usage stats")
+
+    st.markdown("---")
+
+    # FAQs
+    st.markdown("### ❓ Frequently Asked Questions")
+
+    with st.expander("Do I need to sign up to use Multi-LLM Chat?"):
+        st.markdown("""
+        **No!** You can start using the app immediately with your own API keys.
+        We only ask for your email after 3 conversations to send you cost-saving tips
+        and unlock referral rewards.
+        """)
+
+    with st.expander("Do you store my API keys or conversations?"):
+        st.markdown("""
+        **Your API keys stay 100% private.** They're stored only in your browser session
+        and never sent to our servers. Conversations are saved locally in your browser
+        unless you explicitly export them.
+        """)
+
+    with st.expander("How does pricing work? What counts as a conversation?"):
+        st.markdown("""
+        A "conversation" is one query sent to all configured LLMs. The free tier includes
+        10 conversations per day. Premium gives you unlimited conversations. Daily limits
+        reset at midnight UTC.
+        """)
+
+    with st.expander("Can I cancel my subscription anytime?"):
+        st.markdown("""
+        **Yes, cancel anytime.** No contracts, no commitments. When you cancel, you keep
+        access until the end of your billing period, then automatically downgrade to the
+        free tier.
+        """)
+
+    with st.expander("Which AI models are supported?"):
+        st.markdown("""
+        We support **OpenAI** (GPT-4o, GPT-4 Turbo, GPT-3.5), **Anthropic** (Claude Sonnet,
+        Opus, Haiku), **Google** (Gemini 2.0, 1.5 Pro, Flash), and **Ollama** (Llama, Mistral,
+        Qwen - 100% free and local).
+        """)
+
+    with st.expander("How do referral rewards work?"):
+        st.markdown("""
+        Premium users get a unique referral link. When someone signs up through your link,
+        you earn **1 week free** (7 days added to your subscription). When they upgrade to
+        Premium, you earn **1 month free** (30 days). Unlimited referrals!
+        """)
+
+    st.markdown("---")
+
     # Main CTA
     if st.button("🚀 Start Comparing Models Now", type="primary", use_container_width=True):
         st.session_state.show_landing = False
@@ -707,6 +790,90 @@ def main():
 
         st.divider()
 
+        # Admin Metrics Panel (password-protected)
+        admin_password = os.getenv("ADMIN_PASSWORD", "")
+        if admin_password:  # Only show if admin password is configured
+            with st.expander("🔐 Admin Metrics"):
+                password_input = st.text_input("Admin Password", type="password", key="admin_pw")
+
+                if password_input == admin_password:
+                    st.success("✅ Access granted")
+
+                    # Get subscription stats
+                    stats = st.session_state.subscription_manager.get_subscription_stats()
+
+                    # Calculate active paying users
+                    active_paying = (
+                        stats['tier_distribution']['premium'] +
+                        stats['tier_distribution']['team'] +
+                        stats['tier_distribution']['pro']
+                    )
+
+                    # MRR
+                    st.metric("💰 MRR", f"${stats['mrr']:.2f}/mo")
+
+                    # Active users
+                    col_a1, col_a2 = st.columns(2)
+                    with col_a1:
+                        st.metric("Total Users", stats['total_users'])
+                    with col_a2:
+                        st.metric("Paying Users", active_paying)
+
+                    # Conversion rate
+                    st.metric("Conversion Rate", f"{stats['conversion_rate']:.1f}%")
+
+                    # Tier breakdown
+                    st.caption("**Tier Distribution:**")
+                    for tier, count in stats['tier_distribution'].items():
+                        tier_name = SUBSCRIPTION_TIERS[tier]['name']
+                        tier_price = SUBSCRIPTION_TIERS[tier]['price']
+                        st.caption(f"• {tier_name}: {count} users (${tier_price}/mo)")
+
+                    # Recent subscriptions (last 5 paying users)
+                    st.caption("**Recent Paying Users:**")
+                    all_users = st.session_state.subscription_manager.subscriptions.get("users", {})
+                    paying_users = [
+                        (email, data) for email, data in all_users.items()
+                        if data.get('tier') in ['premium', 'team', 'pro']
+                    ]
+
+                    # Sort by tier_started_at descending
+                    paying_users.sort(
+                        key=lambda x: x[1].get('tier_started_at', ''),
+                        reverse=True
+                    )
+
+                    for email, data in paying_users[:5]:
+                        tier = data.get('tier', 'unknown')
+                        started = data.get('tier_started_at', 'N/A')[:10]  # Just the date
+                        payment_status = data.get('payment_status', 'none')
+                        st.caption(f"• {email[:20]}... | {tier} | {started} | {payment_status}")
+
+                    if not paying_users:
+                        st.caption("No paying users yet")
+
+                    # Churn calculation (users who downgraded/canceled)
+                    events = st.session_state.subscription_manager.subscriptions.get("events", [])
+                    churn_events = [
+                        e for e in events
+                        if e.get('event_type') in ['subscription_downgraded', 'subscription_deleted']
+                    ]
+
+                    # Get churned users in last 30 days
+                    from datetime import datetime, timedelta
+                    thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
+                    recent_churns = [
+                        e for e in churn_events
+                        if e.get('timestamp', '') >= thirty_days_ago
+                    ]
+
+                    st.metric("Churns (30 days)", len(recent_churns))
+
+                elif password_input:
+                    st.error("❌ Incorrect password")
+
+        st.divider()
+
         # Referral System
         if st.session_state.email_captured and st.session_state.referral_code:
             st.subheader("🎁 Refer & Earn")
@@ -783,6 +950,14 @@ def main():
     if st.button("🚀 Ask All LLMs", type="primary", use_container_width=True):
         if not prompt:
             st.error("Please enter a question")
+            return
+
+        # Free tier email requirement - enforce before first query
+        if st.session_state.user_tier == 'free' and not st.session_state.email_captured:
+            st.warning("📧 **Free users**: Enter your email to start chatting")
+            st.info("💡 Get access to 10 free conversations per day + referral rewards")
+            st.session_state.show_email_modal = True
+            st.rerun()
             return
 
         # Feature gating: Check usage limits for free tier

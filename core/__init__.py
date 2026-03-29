@@ -17,6 +17,7 @@ from .billing import (
     is_stripe_configured,
     verify_stripe_config
 )
+from .memory import ThreeLayerMemory, MemoryLayer
 
 __all__ = [
     'LLMProvider',
@@ -52,5 +53,7 @@ __all__ = [
     'create_customer_portal_session',
     'get_stripe_subscription_status',
     'is_stripe_configured',
-    'verify_stripe_config'
+    'verify_stripe_config',
+    'ThreeLayerMemory',
+    'MemoryLayer'
 ]

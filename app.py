@@ -24,7 +24,8 @@ from core import (
     format_tier_features,
     create_checkout_session,
     create_customer_portal_session,
-    is_stripe_configured
+    is_stripe_configured,
+    ThreeLayerMemory
 )
 
 # Page config
@@ -144,6 +145,9 @@ if 'token_tracker' not in st.session_state:
 
 if 'usage_logger' not in st.session_state:
     st.session_state.usage_logger = UsageLogger()
+
+if 'memory' not in st.session_state:
+    st.session_state.memory = ThreeLayerMemory()
 
 if 'email_captured' not in st.session_state:
     st.session_state.email_captured = False
@@ -1120,6 +1124,97 @@ def main():
 
         st.divider()
 
+        # Memory System
+        st.subheader("🧠 Memory System")
+
+        memory_stats = st.session_state.memory.get_memory_stats()
+
+        # Memory layer stats
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            st.metric("24h", memory_stats['recent_count'])
+        with col_m2:
+            st.metric("7d", memory_stats['weekly_count'])
+        with col_m3:
+            st.metric("Long-term", memory_stats['longterm_count'])
+
+        # User profile stats
+        st.caption(f"**Profile**: {memory_stats['total_facts']} facts • {memory_stats['total_interests']} interests • {memory_stats['active_goals']} goals")
+
+        # Memory actions
+        with st.expander("📊 View Memory Details"):
+            memory_tab = st.radio(
+                "Memory Layer:",
+                ["Recent (24h)", "Weekly (7d)", "Long-term", "User Profile"],
+                horizontal=True,
+                key="memory_tab"
+            )
+
+            if memory_tab == "Recent (24h)":
+                recent_mems = st.session_state.memory.recent.get_memories(limit=10)
+                if recent_mems:
+                    for mem in recent_mems:
+                        timestamp = datetime.fromisoformat(mem['timestamp']).strftime('%H:%M:%S')
+                        st.caption(f"[{timestamp}] {mem.get('user_message', '')[:80]}...")
+                else:
+                    st.info("No recent memories")
+
+            elif memory_tab == "Weekly (7d)":
+                weekly_mems = st.session_state.memory.weekly.get_memories(limit=10)
+                if weekly_mems:
+                    for mem in weekly_mems:
+                        date = datetime.fromisoformat(mem['timestamp']).strftime('%m/%d %H:%M')
+                        importance = "⭐" * mem.get('importance', 1)
+                        st.caption(f"[{date}] {importance} {mem.get('user_message', '')[:70]}...")
+                else:
+                    st.info("No weekly memories")
+
+            elif memory_tab == "Long-term":
+                longterm_mems = st.session_state.memory.longterm.get_memories(limit=10)
+                if longterm_mems:
+                    for mem in longterm_mems:
+                        date = datetime.fromisoformat(mem['timestamp']).strftime('%Y-%m-%d')
+                        mem_type = mem.get('type', 'conversation')
+                        if mem_type == 'user_fact':
+                            st.caption(f"[{date}] 📌 {mem.get('content', '')}")
+                        elif mem_type == 'goal':
+                            st.caption(f"[{date}] 🎯 {mem.get('content', '')}")
+                        else:
+                            st.caption(f"[{date}] {mem.get('user_message', '')[:70]}...")
+                else:
+                    st.info("No long-term memories")
+
+            elif memory_tab == "User Profile":
+                summary = st.session_state.memory.get_user_summary()
+                st.markdown(summary)
+
+        # Memory management actions
+        col_mem1, col_mem2 = st.columns(2)
+        with col_mem1:
+            if st.button("📥 Export Memory", use_container_width=True):
+                memory_export = st.session_state.memory.export_memories()
+                filename = f"memory_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                st.download_button(
+                    "💾 Download",
+                    json.dumps(memory_export, indent=2),
+                    filename,
+                    mime="application/json",
+                    use_container_width=True
+                )
+
+        with col_mem2:
+            if st.button("🗑️ Clear All", use_container_width=True, key="clear_memory"):
+                if st.session_state.get('confirm_clear_memory'):
+                    st.session_state.memory.clear_all()
+                    st.session_state.confirm_clear_memory = False
+                    st.success("Memory cleared!")
+                    st.rerun()
+                else:
+                    st.session_state.confirm_clear_memory = True
+                    st.warning("Click again to confirm")
+
+        st.divider()
+
         # Admin Metrics Panel (password-protected)
         admin_password = os.getenv("ADMIN_PASSWORD", "")
         if admin_password:  # Only show if admin password is configured
@@ -1334,6 +1429,28 @@ def main():
             # Track usage for free users
             st.session_state.subscription_manager.track_usage(st.session_state.user_email, "conversation")
 
+        # Get memory context to enhance AI responses
+        memory_context = st.session_state.memory.get_context_for_conversation(
+            query=prompt,
+            max_recent=3,
+            max_weekly=2,
+            max_longterm=1
+        )
+
+        # Create enhanced prompt with memory context
+        if memory_context and len(st.session_state.memory.recent.get_memories()) > 0:
+            enhanced_prompt = f"""Based on our conversation history and what you know about me:
+
+{memory_context}
+
+---
+
+Current Question: {prompt}
+
+Please respond naturally, taking into account our previous conversations and what you know about my preferences and context."""
+        else:
+            enhanced_prompt = prompt
+
         # Get responses from all providers
         responses = {}
         providers_used = []
@@ -1346,7 +1463,7 @@ def main():
             for idx, (name, provider) in enumerate(providers.items()):
                 with cols[idx]:
                     with st.spinner(f"{name}..."):
-                        response = provider.chat(prompt)
+                        response = provider.chat(enhanced_prompt)
                         responses[name] = response
 
                         # Track tokens and cost
@@ -1355,7 +1472,7 @@ def main():
                             st.session_state.token_tracker.track(
                                 name.lower(),
                                 provider.model,
-                                prompt,
+                                enhanced_prompt,  # Track the actual prompt sent (includes memory context)
                                 response
                             )
 
@@ -1376,6 +1493,25 @@ def main():
 
         # Save to conversation history
         st.session_state.conversation_manager.add_message(prompt, responses)
+
+        # Add to 3-layer memory system
+        # Combine all AI responses for memory
+        combined_response = "\n\n".join([f"{name}: {resp}" for name, resp in responses.items()])
+
+        # Determine importance based on conversation length and context
+        importance = 1  # Default
+        if len(prompt) > 100 or len(combined_response) > 500:
+            importance = 2  # Longer, more detailed conversations
+        if session_stats.get("total_interactions", 0) < 5:
+            importance = 3  # Early conversations are important for learning about user
+
+        st.session_state.memory.add_conversation(
+            user_message=prompt,
+            ai_response=combined_response,
+            emotion=None,  # TODO: Add emotion detection
+            topics=None,   # TODO: Add topic extraction
+            importance=importance
+        )
 
         # Show email capture after 3rd interaction (if not captured)
         session_stats = st.session_state.usage_logger.get_session_stats()
